@@ -36,6 +36,21 @@ def init_db():
         FOREIGN KEY(job_title_id) REFERENCES job_titles(id)
     )
     """)
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS search_params (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        country TEXT,
+        search_term TEXT
+    )
+    """)
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS title_keywords (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        job_title_id INTEGER,
+        keyword TEXT,
+        FOREIGN KEY(job_title_id) REFERENCES job_titles(id)
+    )
+    """)
     conn.commit()
     conn.close()
 
@@ -62,3 +77,35 @@ def insert_job(country_id, job_title_id, title, company, location, description):
     """, (country_id, job_title_id, title, company, location, description, datetime.now().isoformat()))
     conn.commit()
     conn.close()
+
+def get_search_params():
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute("SELECT country, search_term FROM search_params ORDER BY id LIMIT 1")
+    row = cur.fetchone()
+    conn.close()
+    if row:
+        return row[0], row[1]
+    return None
+
+def add_search_params(country, search_term):
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute("INSERT INTO search_params (country, search_term) VALUES (?, ?)", (country, search_term))
+    conn.commit()
+    conn.close()
+
+def add_keyword_for_title(job_title_id, keyword):
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute("INSERT INTO title_keywords (job_title_id, keyword) VALUES (?, ?)", (job_title_id, keyword))
+    conn.commit()
+    conn.close()
+
+def get_keywords_for_title(job_title_id):
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute("SELECT keyword FROM title_keywords WHERE job_title_id = ?", (job_title_id,))
+    rows = cur.fetchall()
+    conn.close()
+    return [r[0] for r in rows] if rows else []

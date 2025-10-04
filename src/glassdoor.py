@@ -1,33 +1,20 @@
+# src/glassdoor.py  (MODIFIED)
 import asyncio
-import ctypes
-from playwright.async_api import async_playwright, Error as PlaywrightError
-from .config import COUNTRY, SEARCH_TERM, USE_PERSISTENT_BROWSER, BROWSER_PROFILE_PATH, BROWSER, DEBUG, WAIT_TIME, FROM_AGE
-from .database import get_or_create, insert_job
-from .pages.glassdoor_page import GlassdoorPage
-
-# New imports for real maximization
-import pygetwindow as gw
 import time
-
-async def maximize_window(page):
-    """Try maximize via Playwright and pygetwindow fallback."""
-    try:
-        session = await page.context.new_cdp_session(page)
-        await session.send("Browser.setWindowBounds", {
-            "windowId": 1,
-            "bounds": {"windowState": "maximized"}
-        })
-    except Exception:
-        try:
-            time.sleep(1)
-            wins = gw.getWindowsWithTitle("Glassdoor")
-            if wins:
-                win = wins[0]
-                win.maximize()
-        except Exception as e:
-            print("⚠️ Could not maximize window:", e)
+from playwright.async_api import async_playwright, Error as PlaywrightError
+from .config import COUNTRY as CFG_COUNTRY, SEARCH_TERM as CFG_SEARCH_TERM, USE_PERSISTENT_BROWSER, BROWSER_PROFILE_PATH, BROWSER, DEBUG, WAIT_TIME, FROM_AGE
+from .database import get_or_create, insert_job, get_search_params, get_keywords_for_title
+from .pages.glassdoor_page import GlassdoorPage
+from .utils import controls, ui
+from .utils.window import maximize_and_set_viewport
 
 async def search_glassdoor():
+    controls.start_listeners()
+
+    db_params = get_search_params()
+    COUNTRY = db_params[0] if db_params else CFG_COUNTRY
+    SEARCH_TERM = db_params[1] if db_params else CFG_SEARCH_TERM
+
     try:
         country_id = get_or_create("countries", "name", COUNTRY)
         job_title_id = get_or_create("job_titles", "title", SEARCH_TERM)
@@ -47,21 +34,15 @@ async def search_glassdoor():
                 browser_context = await p.chromium.launch(headless=False, channel=BROWSER.lower(), args=args)
                 page = await browser_context.new_page()
 
-            # Maximize
-            await maximize_window(page)
+            # maximize and set viewport to actual window bounds
+            await maximize_and_set_viewport(page, title_hint="Glassdoor")
 
             print("Navigating directly to Glassdoor jobs page...")
             await page.goto("https://www.glassdoor.co.uk/Job/index.htm")
             gd = GlassdoorPage(page, wait_time=WAIT_TIME)
 
             if not await gd.is_logged_in():
-                print("⚠️ Login required. Please log in manually and click OK.")
-                ctypes.windll.user32.MessageBoxW(
-                    0,
-                    "Login required on Glassdoor. Please log in manually and click OK.",
-                    "RPA Login",
-                    0
-                )
+                ui.show_msgbox("RPA Login", "Login required on Glassdoor. Please log in manually and click OK.")
 
             await gd.wait(WAIT_TIME)
             await gd.search_job(SEARCH_TERM, COUNTRY)
@@ -78,9 +59,15 @@ async def search_glassdoor():
             await gd.wait(WAIT_TIME)
 
             await gd.load_all_jobs()
+
+            # ensure modal closed after load
             await gd.close_modal_if_exists()
 
-            jobs = await gd.get_jobs()
+            # get keywords for the job_title_id and pass to get_jobs
+            keywords = get_keywords_for_title(job_title_id)
+            print(f"Total keywords scraped: {keywords}")
+            
+            jobs = await gd.get_jobs(keywords=keywords)
             print(f"Total jobs scraped: {len(jobs)}")
 
             for job in jobs:
